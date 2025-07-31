@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Prototype d'inscription par créneau</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{--radius:12px;--shadow:0 10px 30px -5px rgba(0,0,0,0.1);font-family:system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;}
+    *{box-sizing:border-box;}
+    body{margin:0;background:#f5f7fa;color:#1f2d3a;padding:1rem;}
+    .container{max-width:900px;margin:0 auto;display:grid;gap:1.5rem;}
+    h1{font-size:clamp(1.5rem,2.5vw,2.5rem);margin-bottom:0.25em;}
+    .card{background:#fff;border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow);}
+    label{display:block;margin:0.5rem 0 0.25rem;font-weight:600;}
+    select,input{width:100%;padding:0.6rem;border:1px solid #d8e2ec;border-radius:8px;font-size:1rem;}
+    button{cursor:pointer;padding:0.75rem 1rem;border:none;border-radius:10px;font-weight:600;display:inline-flex;align-items:center;gap:6px;transition:filter .2s;}
+    .primary{background:#6366f1;color:#fff;}
+    .secondary{background:#eef2f7;color:#334e68;}
+    .small{font-size:0.85rem;}
+    .flex{display:flex;gap:1rem;}
+    .badge{background:#e2e8f0;padding:4px 10px;border-radius:999px;font-size:0.75rem;}
+    .error{color:#b00020;font-weight:600;}
+    .success{color:#117a37;font-weight:600;}
+    .admin-section{margin-top:1rem;}
+    .table{width:100%;border-collapse:collapse;margin-top:0.5rem;}
+    .table th, .table td{border:1px solid #e2e8f0;padding:8px;text-align:left;font-size:0.85rem;}
+    .pill{background:#f0f9ff;border-radius:999px;padding:4px 10px;}
+    .hidden{display:none;}
+    .input-inline{display:flex;gap:0.5rem;}
+    .caps{letter-spacing:1px;font-size:0.6rem;text-transform:uppercase;}
+    .link{background:transparent;border:none;color:#6366f1;cursor:pointer;text-decoration:underline;padding:0;font-size:0.9rem;}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Inscription par créneau</h1>
+      <p>Choisis un créneau; max 5 inscrits par plage. Les autres participants ne sont pas visibles. Reçois une confirmation locale.</p>
+      <div id="user-form">
+        <label for="name">Nom complet</label>
+        <input id="name" placeholder="Ex: Julie Tremblay" required />
+        <label for="email">Courriel</label>
+        <input id="email" placeholder="exemple@domaine.com" type="email" required />
+        <label for="slot">Choisir un créneau</label>
+        <select id="slot"></select>
+        <div style="margin-top:0.5rem;" id="status-message"></div>
+        <button class="primary" id="submit-btn">S'inscrire</button>
+      </div>
+      <div id="confirmation" class="hidden">
+        <p class="success">Merci ! Ton inscription est confirmée.</p>
+        <p id="conf-info"></p>
+        <button class="secondary" id="new-signup">Nouvelle inscription</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="flex" style="justify-content:space-between;align-items:center;">
+        <div>
+          <div class="caps">Section administrateur</div>
+          <h2 style="margin:0;">Vue admin</h2>
+        </div>
+        <div>
+          <button id="admin-toggle" class="secondary">Se connecter</button>
+        </div>
+      </div>
+      <div id="admin-login" class="admin-section">
+        <p>Mot de passe admin (défini en dur dans le code : <code>admin123</code>)</p>
+        <div class="input-inline">
+          <input id="admin-password" type="password" placeholder="Password" />
+          <button id="login-btn" class="primary">Connexion</button>
+        </div>
+        <div id="admin-error" class="error"></div>
+      </div>
+      <div id="admin-panel" class="admin-section hidden">
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+          <div style="flex:1;min-width:200px;">
+            <label for="filter-slot">Filtrer par créneau</label>
+            <select id="filter-slot"></select>
+          </div>
+          <div style="flex:1;min-width:200px;">
+            <label for="clear-all">Actions</label><br />
+            <button id="export-btn" class="secondary">Exporter CSV</button>
+            <button id="reset-btn" class="secondary">Réinitialiser tout</button>
+          </div>
+        </div>
+        <div style="margin-top:1rem;" id="admin-summary"></div>
+        <div id="list-container" style="margin-top:0.5rem;"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    // === CONFIG ===
+    const ADMIN_PASSWORD = 'admin123'; // changer avant usage réel
+    const SLOTS = [
+      '08:00 - 08:30',
+      '09:00 - 09:30',
+      '10:00 - 10:30',
+      '11:00 - 11:30',
+      '13:00 - 13:30',
+      '14:00 - 14:30',
+      '15:00 - 15:30',
+    ];
+    const CAPACITY = 5;
+    const STORAGE_KEY = 'inscriptions_creneaux';
+
+    // === util ===
+    function loadData(){
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(!raw) return {};
+      try{ return JSON.parse(raw);}catch(e){return {};}    
+    }
+    function saveData(d){ localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+    function getSlotCount(slot){ const d=loadData(); return d[slot]?d[slot].length:0; }
+    function addSignup(slot, entry){ const d=loadData(); d[slot]=d[slot]||[]; d[slot].push(entry); saveData(d);}    
+    function clearAll(){ localStorage.removeItem(STORAGE_KEY); }
+
+    // === populate selects ===
+    const slotSelect = document.getElementById('slot');
+    const filterSlot = document.getElementById('filter-slot');
+    function refreshSlotOptions(){
+      slotSelect.innerHTML='';
+      filterSlot.innerHTML='';
+      SLOTS.forEach(s=>{
+        const count=getSlotCount(s);
+        const opt=document.createElement('option');
+        opt.value=s;
+        opt.textContent=`${s} (${count}/${CAPACITY})`;
+        if(count>=CAPACITY){ opt.disabled=true; }
+        slotSelect.appendChild(opt);
+
+        const fopt=document.createElement('option');
+        fopt.value=s; fopt.textContent=s; filterSlot.appendChild(fopt);
+      });
+      // admin filter add "Tous"
+      const allOpt = document.createElement('option');
+      allOpt.value='__all'; allOpt.textContent='Tous';
+      filterSlot.insertBefore(allOpt, filterSlot.firstChild);
+    }
+
+    function showStatus(msg, isError){
+      const el=document.getElementById('status-message');
+      el.textContent=msg;
+      el.className=isError? 'error':'success';
+    }
+
+    document.getElementById('submit-btn').addEventListener('click',e=>{
+      e.preventDefault();
+      const name=document.getElementById('name').value.trim();
+      const email=document.getElementById('email').value.trim();
+      const slot=slotSelect.value;
+      if(!name||!email){ showStatus('Nom et courriel requis.', true); return; }
+      const currentCount=getSlotCount(slot);
+      if(currentCount>=CAPACITY){ showStatus('Ce créneau est complet.', true); refreshSlotOptions(); return; }
+      // simple duplicate check: same email in same slot
+      const d=loadData();
+      const existing=(d[slot]||[]).find(i=>i.email.toLowerCase()===email.toLowerCase());
+      if(existing){ showStatus('Tu es déjà inscrit à ce créneau.', true); return; }
+      const entry={name,email,when:new Date().toISOString()};
+      addSignup(slot, entry);
+      // show confirmation
+      document.getElementById('user-form').classList.add('hidden');
+      document.getElementById('confirmation').classList.remove('hidden');
+      document.getElementById('conf-info').innerHTML=`<strong>${slot}</strong><br>Nom: ${name}<br>Courriel: ${email}`;
+      showStatus('', false);
+      refreshSlotOptions();
+    });
+    document.getElementById('new-signup').addEventListener('click',()=>{
+      document.getElementById('user-form').classList.remove('hidden');
+      document.getElementById('confirmation').classList.add('hidden');
+      document.getElementById('name').value='';
+      document.getElementById('email').value='';
+    });
+
+    // admin login toggle
+    document.getElementById('admin-toggle').addEventListener('click',()=>{
+      const panel=document.getElementById('admin-panel');
+      if(!panel.classList.contains('hidden')){ // logout
+        panel.classList.add('hidden');
+        document.getElementById('admin-login').classList.remove('hidden');
+        document.getElementById('admin-toggle').textContent='Se connecter';
+      }
+    });
+    document.getElementById('login-btn').addEventListener('click',()=>{
+      const pw=document.getElementById('admin-password').value;
+      const err=document.getElementById('admin-error');
+      if(pw!==ADMIN_PASSWORD){ err.textContent='Mot de passe incorrect.'; return; }
+      err.textContent='';
+      document.getElementById('admin-login').classList.add('hidden');
+      document.getElementById('admin-panel').classList.remove('hidden');
+      document.getElementById('admin-toggle').textContent='Se déconnecter';
+      refreshAdminView();
+    });
+
+    function buildAdminList(filter){
+      const d=loadData();
+      let slotsToShow = Object.keys(d);
+      if(filter && filter!=='__all'){ slotsToShow=[filter]; }
+      let html = '';
+      let total=0;
+      slotsToShow.forEach(slot=>{
+        const entries=d[slot]||[];
+        total += entries.length;
+        html += `<div style="margin-bottom:1rem;"><div class="pill"><strong>${slot}</strong> — ${entries.length}/${CAPACITY}</div>`;
+        if(entries.length){
+          html += '<table class="table"><thead><tr><th>Nom</th><th>Courriel</th><th>Inscrit le</th></tr></thead><tbody>';
+          entries.forEach(e=>{
+            html += `<tr><td>${e.name}</td><td>${e.email}</td><td>${new Date(e.when).toLocaleString('fr-CA')}</td></tr>`;
+          });
+          html += '</tbody></table>';
+        } else {
+          html += '<div style="margin-top:4px;">Aucun inscrits.</div>';
+        }
+        html += '</div>';
+      });
+      document.getElementById('list-container').innerHTML=html||'<div>Aucune inscription.</div>';
+      document.getElementById('admin-summary').innerHTML=`<strong>Total inscriptions:</strong> ${total}`;
+    }
+
+    function refreshAdminView(){
+      refreshSlotOptions();
+      buildAdminList(filterSlot.value);
+    }
+    filterSlot.addEventListener('change',()=>{ buildAdminList(filterSlot.value); });
+
+    document.getElementById('export-btn').addEventListener('click',()=>{
+      const d=loadData();
+      let csv='Créneau,Nom,Courriel,Inscrit le\n';
+      Object.entries(d).forEach(([slot,arr])=>{
+        arr.forEach(e=>{
+          csv += `"${slot}","${e.name}","${e.email}","${new Date(e.when).toLocaleString('fr-CA')}"\n`;
+        });
+      });
+      const blob=new Blob([csv],{type:'text/csv'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download='inscriptions.csv';
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+    });
+    document.getElementById('reset-btn').addEventListener('click',()=>{
+      if(confirm('Tout réinitialiser ? Les données seront perdues.')){ clearAll(); refreshAdminView(); }
+    });
+
+    // initial render
+    refreshSlotOptions();
+  </script>
+</body>
+</html>
